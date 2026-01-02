@@ -138,58 +138,6 @@ vpm/
 └── README.md      # This file
 ```
 
-### Color Output
-
-VPM uses ANSI escape sequences:
-- 🟢 Green: Success messages
-- 🔵 Cyan: Info messages
-- 🟡 Yellow: Warnings
-- 🔴 Red: Errors
-
-## Examples
-
-### Create and Publish a Package
-
-```bash
-# 1. Initialize
-vpm init my-lib
-cd my-lib
-
-# 2. Write your code in mod.vyl
-cat > mod.vyl << 'EOF'
-Function MyFunction() {
-    Print("Hello from my-lib!\n");
-}
-EOF
-
-# 3. Update mod.vinfo
-cat > mod.vinfo << 'EOF'
-name=my-lib
-version=1.0.0
-author=Your Name
-description=My awesome library
-dependencies=
-EOF
-
-# 4. Test locally
-cp -r ../my-lib ~/.vyl/modules/
-vylc test.vyl  # import my-lib should work
-
-# 5. Publish to GitHub repo
-# (Add to mods/ directory and update index.txt)
-```
-
-### Use a Package
-
-```vyl
-import http
-
-Function Main() -> int {
-    // Use http functions
-    return 0;
-}
-```
-
 ## Troubleshooting
 
 ### "Package not found"
@@ -217,12 +165,8 @@ Function Main() -> int {
 
 ## Contributing
 
-VPM is part of the VYL Language project. See the main repository for contribution guidelines.
+VPM is part of the VYL Language project. See the [main repository](https://github.com/New-Tech-Exclusive/VYL-Language) for contribution guidelines.
 
 ## License
 
-Same as VYL Language (see repository root)
-
----
-
-**Built with VYL. Powered by the community.** 🚀
+Same as VYL Language (see VYL language repository root)

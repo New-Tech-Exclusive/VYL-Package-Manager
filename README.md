@@ -7,10 +7,10 @@ The official package manager for the VYL programming language.
 ```bash
 # Compile VPM
 cd vpm/
-vylc main.vyl -o vpm
+vyl -c main.vyl
 
 # Install system-wide (optional)
-sudo cp vpm /usr/local/bin/
+ln -s /FULL/PATH/TO/VPM/EXEC /usr/local/bin/vpm
 ```
 
 ## Usage

@@ -1,15 +1,6 @@
-# VPM - VYL Package Manager v2.0
+# VPM - VYL Package Manager v1.0
 
 The official package manager for the VYL programming language.
-
-## Features
-
-✨ **New in v2.0:**
-- 🚀 Project initialization with `vpm init`
-- 🔍 Package search with `vpm search`
-- 📌 Version pinning with `package@version` syntax
-- 🎨 Colorized output for better UX
-- 📚 Uses VYL's own stdlib (dogfooding!)
 
 ## Installation
 
@@ -29,8 +20,11 @@ sudo cp vpm /usr/local/bin/
 ```bash
 vpm init my-project
 cd my-project
-vylc main.vyl -o app
-./app
+vyl main.vyl -o app
+./app 
+# or
+vyl -c main.vyl
+./main.vylo
 ```
 
 This creates:

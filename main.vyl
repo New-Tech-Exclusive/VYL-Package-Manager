@@ -1,0 +1,679 @@
+// VPM - VYL Package Manager v2.0
+// Registry: github.com/New-Tech-Exclusive/VYL-Language/mods
+
+import stdlib
+
+Function PrintUsage() {
+    Print("VPM - VYL Package Manager v2.0\n\n");
+    Print("Usage:\n");
+    Print("  vpm init <name>           Initialize a new VYL project\n");
+    Print("  vpm install <name>[@ver]  Install a package from registry\n");
+    Print("  vpm update [name]         Update package(s) to latest version\n");
+    Print("  vpm search <term>         Search available packages\n");
+    Print("  vpm list                  List installed packages\n");
+    Print("  vpm info <name>           Show package info\n");
+    Print("  vpm remove <name>         Remove a package\n");
+    Print("\nExamples:\n");
+    Print("  vpm init my-project\n");
+    Print("  vpm install hello\n");
+    Print("  vpm install http@1.0.0\n");
+    Print("  vpm update                # Update all packages\n");
+    Print("  vpm update stdlib         # Update specific package\n");
+    Print("  vpm search string\n");
+    Print("\nRegistry: github.com/New-Tech-Exclusive/VYL-Language/mods\n");
+}
+
+Function GetConfigValue(content: string, key: string) -> string {
+    // Parse key=value from content
+    var string searchKey = StrConcat(key, "=");
+    var int pos = StrFind(content, searchKey);
+    if (pos < 0) {
+        return "";
+    }
+    
+    var int valueStart = pos + StrLen(searchKey);
+    var int contentLen = StrLen(content);
+    
+    var string remaining = Substring(content, valueStart, contentLen - valueStart);
+    var int nlPos = StrFind(remaining, "\n");
+    
+    var int valueLen = 0;
+    if (nlPos < 0) {
+        valueLen = StrLen(remaining);
+    } else {
+        valueLen = nlPos;
+    }
+    
+    // Handle \r\n
+    if (valueLen > 0) {
+        var string lastChar = Substring(remaining, valueLen - 1, 1);
+        if (StrFind(lastChar, "\r") == 0) {
+            valueLen = valueLen - 1;
+        }
+    }
+    
+    if (valueLen <= 0) {
+        return "";
+    }
+    
+    return Substring(content, valueStart, valueLen);
+}
+
+Function PrintPkgInfo(moduleDir: string) -> int {
+    var string vinfoPath = StrConcat(moduleDir, "/mod.vinfo");
+    var string content = readTextFile(vinfoPath);
+    
+    if (StrLen(content) == 0) {
+        Print("  (no mod.vinfo)\n");
+        return 0;
+    }
+    
+    var string version = GetConfigValue(content, "version");
+    var string author = GetConfigValue(content, "author");
+    var string description = GetConfigValue(content, "description");
+    var string dependencies = GetConfigValue(content, "dependencies");
+    
+    if (StrLen(version) > 0) {
+        Print("  Version: ");
+        Print(version);
+        Print("\n");
+    }
+    if (StrLen(author) > 0) {
+        Print("  Author: ");
+        Print(author);
+        Print("\n");
+    }
+    if (StrLen(description) > 0) {
+        Print("  Description: ");
+        Print(description);
+        Print("\n");
+    }
+    if (StrLen(dependencies) > 0) {
+        Print("  Dependencies: ");
+        Print(dependencies);
+        Print("\n");
+    }
+    
+    return 1;
+}
+
+Function GetModulesDir() -> string {
+    var string homeDir = GetEnv("HOME");
+    if (StrLen(homeDir) == 0) {
+        return "";
+    }
+    return StrConcat(homeDir, "/.vyl/modules");
+}
+
+// Parse package@version into (name, version)
+// Returns name in first call, version in second call (hacky but works)
+Function ParsePackageSpec(spec: string, wantVersion: int) -> string {
+    var int atPos = StrFind(spec, "@");
+    
+    if (atPos < 0) {
+        // No version specified
+        if (wantVersion == 1) {
+            return "";
+        }
+        return spec;
+    }
+    
+    if (wantVersion == 1) {
+        // Return version part
+        var int specLen = StrLen(spec);
+        return Substring(spec, atPos + 1, specLen - atPos - 1);
+    }
+    
+    // Return name part
+    return Substring(spec, 0, atPos);
+}
+
+Function InitProject(name: string) -> int {
+    Print("Initializing project: ");
+    Print(name);
+    Print("\n");
+    
+    // Create directory (MkdirP will fail if it exists)
+    var int ok = MkdirP(name);
+    if (ok != 1) {
+        Print("Error: Failed to create directory (may already exist)\n");
+        return 0;
+    }
+    
+    // Create mod.vinfo
+    var string infoPath = StrConcat(name, "/mod.vinfo");
+    var string info = StrConcat("name=", name);
+    info = StrConcat(info, "\nversion=0.1.0\nauthor=Me\ndescription=My VYL Project\ndependencies=\n");
+    var int wrote = writeTextFile(infoPath, info);
+    if (wrote != 1) {
+        Print("Error: Failed to create mod.vinfo\n");
+        return 0;
+    }
+    
+    // Create main.vyl with hello world
+    var string mainPath = StrConcat(name, "/main.vyl");
+    var string mainCode = "Function Main() -> int {\n";
+    mainCode = StrConcat(mainCode, "    Print(\"Hello from ");
+    mainCode = StrConcat(mainCode, name);
+    mainCode = StrConcat(mainCode, "!\\n\");\n    return 0;\n}\n");
+    wrote = writeTextFile(mainPath, mainCode);
+    if (wrote != 1) {
+        Print("Error: Failed to create main.vyl\n");
+        return 0;
+    }
+    
+    Print("Created project '");
+    Print(name);
+    Print("'\n");
+    Print("  - ");
+    Print(infoPath);
+    Print("\n");
+    Print("  - ");
+    Print(mainPath);
+    Print("\n\n");
+    Print("Next steps:\n");
+    Print("  cd ");
+    Print(name);
+    Print("\n  vylc main.vyl -o app\n  ./app\n");
+    
+    return 1;
+}
+
+Function SearchPackages(term: string) -> int {
+    Print("Searching for: ");
+    Print(term);
+    Print("\n\n");
+    
+    // Download index.txt from registry
+    var string host = "raw.githubusercontent.com";
+    var string indexPath = "/New-Tech-Exclusive/VYL-Language/master/index.txt";
+    var string tmpIndex = "/tmp/vpm_index.txt";
+    
+    Print("Fetching package index...\n");
+    var int dlOk = HttpDownload(host, indexPath, 1, tmpIndex);
+    if (dlOk == 0) {
+        Print("Error: Failed to download package index\n");
+        Print("Note: index.txt must exist at repository root\n");
+        return 0;
+    }
+    
+    // Read and search index
+    var string indexContent = readTextFile(tmpIndex);
+    if (StrLen(indexContent) == 0) {
+        Print("Error: Package index is empty\n");
+        return 0;
+    }
+    
+    Print("Available packages:\n");
+    var int found = 0;
+    var int i = 0;
+    var int start = 0;
+    var int indexLen = StrLen(indexContent);
+    
+    // Parse line by line
+    while (i <= indexLen) {
+        var string currentChar = "";
+        if (i < indexLen) {
+            currentChar = Substring(indexContent, i, 1);
+        }
+        
+        var int isNewline = 0;
+        if (i == indexLen) {
+            isNewline = 1;
+        }
+        if (i < indexLen) {
+            if (StrFind(currentChar, "\n") == 0) {
+                isNewline = 1;
+            }
+        }
+        
+        if (isNewline == 1) {
+            if (i > start) {
+                var string line = Substring(indexContent, start, i - start);
+                
+                // Check if line contains search term
+                var int matchPos = StrFind(line, term);
+                if (matchPos >= 0) {
+                    Print("  ");
+                    Print(line);
+                    Print("\n");
+                    found = found + 1;
+                }
+            }
+            start = i + 1;
+        }
+        
+        i = i + 1;
+    }
+    
+    if (found == 0) {
+        Print("No packages found matching '");
+        Print(term);
+        Print("'\n");
+    } else {
+        Print("\nFound ");
+        Print(found);
+        Print(" package(s)\n");
+    }
+    
+    return 1;
+}
+
+Function List() -> int {
+    var string modulesDir = GetModulesDir();
+    if (StrLen(modulesDir) == 0) {
+        Print("Error: HOME not set\n");
+        return 0;
+    }
+    
+    Print("Installed packages:\n");
+    var int dir = OpenDir(modulesDir);
+    if (dir == 0) {
+        Print("  (none)\n");
+        return 1;
+    }
+    
+    var int count = 0;
+    var string entry = ReadDir(dir);
+    while (StrLen(entry) > 0) {
+        Print("  ");
+        Print(entry);
+        Print("\n");
+        count = count + 1;
+        entry = ReadDir(dir);
+    }
+    
+    CloseDir(dir);
+    
+    if (count == 0) {
+        Print("  (none)\n");
+    }
+    
+    return 1;
+}
+
+Function Info(name: string) -> int {
+    var string modulesDir = GetModulesDir();
+    if (StrLen(modulesDir) == 0) {
+        Print("Error: HOME not set\n");
+        return 0;
+    }
+    
+    var string moduleDir = StrConcat(modulesDir, "/");
+    moduleDir = StrConcat(moduleDir, name);
+    
+    var string modPath = StrConcat(moduleDir, "/mod.vyl");
+    var int exists = fileExists(modPath);
+    if (exists == 0) {
+        Print("Package '");
+        Print(name);
+        Print("' is not installed\n");
+        return 0;
+    }
+    
+    Print("Package: ");
+    Print(name);
+    Print("\n");
+    PrintPkgInfo(moduleDir);
+    
+    return 1;
+}
+
+Function InstallDependencies(vInfoPath: string) -> int {
+    var string content = readTextFile(vInfoPath);
+    if (StrLen(content) == 0) {
+        return 1;
+    }
+    
+    var string deps = GetConfigValue(content, "dependencies");
+    if (StrLen(deps) == 0) {
+        return 1;
+    }
+    
+    // Parse comma-separated dependencies
+    Print("Installing dependencies: ");
+    Print(deps);
+    Print("\n");
+    
+    var int i = 0;
+    var int start = 0;
+    var int depsLen = StrLen(deps);
+    
+    while (i <= depsLen) {
+        var string currentChar = "";
+        if (i < depsLen) {
+            currentChar = Substring(deps, i, 1);
+        }
+        
+        var int isComma = 0;
+        if (i < depsLen) {
+            if (StrFind(currentChar, ",") == 0) {
+                isComma = 1;
+            }
+        }
+        
+        if (i == depsLen) {
+            if (i > start) {
+                var string depName = Substring(deps, start, i - start);
+                Print("  -> ");
+                Print(depName);
+                Print("\n");
+                var int ok = Install(depName);
+                if (ok != 1) {
+                    return 0;
+                }
+            }
+        }
+        
+        if (isComma == 1) {
+            if (i > start) {
+                var string depName = Substring(deps, start, i - start);
+                Print("  -> ");
+                Print(depName);
+                Print("\n");
+                var int ok = Install(depName);
+                if (ok != 1) {
+                    return 0;
+                }
+            }
+            start = i + 1;
+        }
+        
+        i = i + 1;
+    }
+    
+    return 1;
+}
+
+Function Install(spec: string) -> int {
+    // Parse package@version
+    var string pkgName = ParsePackageSpec(spec, 0);
+    var string pkgVersion = ParsePackageSpec(spec, 1);
+    
+    // Get destination
+    var string modulesBase = GetModulesDir();
+    if (StrLen(modulesBase) == 0) {
+        Print("Error: HOME not set\n");
+        return 0;
+    }
+    
+    var string moduleDir = StrConcat(modulesBase, "/");
+    moduleDir = StrConcat(moduleDir, pkgName);
+    
+    // Check if already installed
+    var string checkMod = StrConcat(moduleDir, "/mod.vyl");
+    var int exists = fileExists(checkMod);
+    if (exists == 1) {
+        Print("Package '");
+        Print(pkgName);
+        Print("' already installed, skipping\n");
+        return 1;
+    }
+    
+    Print("Installing package: ");
+    Print(pkgName);
+    if (StrLen(pkgVersion) > 0) {
+        Print("@");
+        Print(pkgVersion);
+    }
+    Print("\n");
+    
+    RemoveAll(moduleDir);
+    MkdirP(moduleDir);
+    
+    // Determine branch/tag
+    var string branch = "master";
+    if (StrLen(pkgVersion) > 0) {
+        branch = StrConcat("v", pkgVersion);
+    }
+    
+    // Download mod.vinfo first
+    Print("Downloading mod.vinfo...\n");
+    var string host = "raw.githubusercontent.com";
+    var string infoPath = StrConcat("/New-Tech-Exclusive/VYL-Language/", branch);
+    infoPath = StrConcat(infoPath, "/mods/");
+    infoPath = StrConcat(infoPath, pkgName);
+    infoPath = StrConcat(infoPath, "/mod.vinfo");
+    
+    var string dstInfo = StrConcat(moduleDir, "/mod.vinfo");
+    var int dlOk = HttpDownload(host, infoPath, 1, dstInfo);
+    if (dlOk == 0) {
+        Print("Error: Failed to download mod.vinfo\n");
+        return 0;
+    }
+    
+    // Install dependencies first
+    var int depsOk = InstallDependencies(dstInfo);
+    if (depsOk != 1) {
+        Print("Error: Failed to install dependencies\n");
+        return 0;
+    }
+    
+    // Download mod.vyl
+    Print("Downloading mod.vyl...\n");
+    var string modPath = StrConcat("/New-Tech-Exclusive/VYL-Language/", branch);
+    modPath = StrConcat(modPath, "/mods/");
+    modPath = StrConcat(modPath, pkgName);
+    modPath = StrConcat(modPath, "/mod.vyl");
+    
+    var string dstMod = StrConcat(moduleDir, "/mod.vyl");
+    var int modDlOk = HttpDownload(host, modPath, 1, dstMod);
+    if (modDlOk == 0) {
+        Print("Error: Failed to download mod.vyl\n");
+        return 0;
+    }
+    
+    // Check if downloaded successfully
+    var int modExists = fileExists(dstMod);
+    if (modExists == 0) {
+        Print("Error: Package '");
+        Print(pkgName);
+        Print("' not found in registry\n");
+        return 0;
+    }
+    
+    Print("Successfully installed '");
+    Print(pkgName);
+    if (StrLen(pkgVersion) > 0) {
+        Print("@");
+        Print(pkgVersion);
+    }
+    Print("'\n");
+    
+    return 1;
+}
+
+Function UpdatePackage(name: string) -> int {
+    var string modulesDir = GetModulesDir();
+    if (StrLen(modulesDir) == 0) {
+        Print("Error: HOME not set\n");
+        return 0;
+    }
+    
+    var string moduleDir = StrConcat(modulesDir, "/");
+    moduleDir = StrConcat(moduleDir, name);
+    
+    var string modPath = StrConcat(moduleDir, "/mod.vyl");
+    var int exists = fileExists(modPath);
+    if (exists == 0) {
+        Print("Package '");
+        Print(name);
+        Print("' is not installed\n");
+        return 0;
+    }
+    
+    Print("Updating '");
+    Print(name);
+    Print("'...\n");
+    
+    // Remove old version
+    RemoveAll(moduleDir);
+    
+    // Install latest version
+    var int ok = Install(name);
+    return ok;
+}
+
+Function UpdateAll() -> int {
+    var string modulesDir = GetModulesDir();
+    if (StrLen(modulesDir) == 0) {
+        Print("Error: HOME not set\n");
+        return 0;
+    }
+    
+    Print("Updating all packages...\n\n");
+    var int dir = OpenDir(modulesDir);
+    if (dir == 0) {
+        Print("No packages installed\n");
+        return 1;
+    }
+    
+    var int count = 0;
+    var string entry = ReadDir(dir);
+    while (StrLen(entry) > 0) {
+        var int ok = UpdatePackage(entry);
+        if (ok == 1) {
+            count = count + 1;
+        }
+        entry = ReadDir(dir);
+    }
+    
+    CloseDir(dir);
+    
+    Print("\nUpdated ");
+    Print(count);
+    Print(" package(s)\n");
+    
+    return 1;
+}
+
+Function RemovePkg(name: string) -> int {
+    var string modulesDir = GetModulesDir();
+    if (StrLen(modulesDir) == 0) {
+        Print("Error: HOME not set\n");
+        return 0;
+    }
+    
+    var string moduleDir = StrConcat(modulesDir, "/");
+    moduleDir = StrConcat(moduleDir, name);
+    
+    var string modPath = StrConcat(moduleDir, "/mod.vyl");
+    var int exists = fileExists(modPath);
+    if (exists == 0) {
+        Print("Package '");
+        Print(name);
+        Print("' is not installed\n");
+        return 0;
+    }
+    
+    RemoveAll(moduleDir);
+    Print("Removed '");
+    Print(name);
+    Print("'\n");
+    
+    return 1;
+}
+
+Function StrEq(a: string, b: string) -> int {
+    if (StrLen(a) != StrLen(b)) {
+        return 0;
+    }
+    if (StrFind(a, b) == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+Function Main() -> int {
+    var int argc = Argc();
+    
+    if (argc < 2) {
+        PrintUsage();
+        return 1;
+    }
+    
+    var string cmd = GetArg(1);
+    
+    if (StrEq(cmd, "init") == 1) {
+        if (argc < 3) {
+            Print("Usage: vpm init <name>\n");
+            return 1;
+        }
+        var string name = GetArg(2);
+        var int ok = InitProject(name);
+        if (ok == 1) {
+            return 0;
+        }
+        return 1;
+    }
+    
+    if (StrEq(cmd, "install") == 1) {
+        if (argc < 3) {
+            Print("Usage: vpm install <name>[@version]\n");
+            return 1;
+        }
+        var string spec = GetArg(2);
+        var int ok = Install(spec);
+        if (ok == 1) {
+            return 0;
+        }
+        return 1;
+    }
+    
+    if (StrEq(cmd, "update") == 1) {
+        if (argc < 3) {
+            UpdateAll();
+            return 0;
+        }
+        var string name = GetArg(2);
+        var int ok = UpdatePackage(name);
+        if (ok == 1) {
+            return 0;
+        }
+        return 1;
+    }
+    
+    if (StrEq(cmd, "search") == 1) {
+        if (argc < 3) {
+            Print("Usage: vpm search <term>\n");
+            return 1;
+        }
+        var string term = GetArg(2);
+        SearchPackages(term);
+        return 0;
+    }
+    
+    if (StrEq(cmd, "list") == 1) {
+        List();
+        return 0;
+    }
+    
+    if (StrEq(cmd, "info") == 1) {
+        if (argc < 3) {
+            Print("Usage: vpm info <name>\n");
+            return 1;
+        }
+        var string name = GetArg(2);
+        Info(name);
+        return 0;
+    }
+    
+    if (StrEq(cmd, "remove") == 1) {
+        if (argc < 3) {
+            Print("Usage: vpm remove <name>\n");
+            return 1;
+        }
+        var string name = GetArg(2);
+        var int ok = RemovePkg(name);
+        if (ok == 1) {
+            return 0;
+        }
+        return 1;
+    }
+    
+    Print("Unknown command: ");
+    Print(cmd);
+    Print("\n");
+    PrintUsage();
+    return 1;
+}
